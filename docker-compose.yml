@@ -1,0 +1,72 @@
+# docker-compose.yml
+# This file defines both the PostgreSQL service and your Spring Boot application service.
+# To run both: navigate to the directory containing this file and execute:
+# docker-compose up --build (the --build flag rebuilds the app image if Dockerfile changes)
+
+version: "3.8" # Specifies the version of the Docker Compose file format
+
+services:
+  # PostgreSQL Database Service
+  postgres-db:
+    image: postgres:15
+    container_name: my_postgres_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123 # Ensure this matches application.properties if running app locally
+      POSTGRES_DB: mcp_data
+    ports:
+      - "5432:5432" # Maps host port 5432 to container port 5432
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d # For initial SQL scripts
+      - postgres_data_volume:/var/lib/postgresql/data # Persists PostgreSQL data
+    restart: unless-stopped
+    healthcheck: # Optional: checks if PostgreSQL is ready
+      test: ["CMD-SHELL", "pg_isready -U admin -d mcp_data"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Spring Boot Application Service
+  spring-app:
+    build:
+      context: . # Specifies the build context is the current directory (where Dockerfile is)
+      dockerfile: Dockerfile # Specifies the name of the Dockerfile
+    container_name: my_spring_ai_mcp_app
+    ports:
+      - "8080:8080" # Maps host port 8080 to container port 8080 (app's port)
+    environment:
+      # Database connection details for the Spring Boot app
+      # IMPORTANT: 'postgres-db' is the service name of the PostgreSQL container
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/mcp_data
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: password123
+      # Your Spring AI (OpenAI) API Key
+      # It's better to use a .env file for secrets, but this is for local testing.
+      SPRING_AI_OPENAI_API_KEY: YOUR_OPENAI_API_KEY_REPLACE_ME # <<< IMPORTANT: REPLACE THIS
+      # Optional: Set active Spring profile if needed
+      # SPRING_PROFILES_ACTIVE: dev
+    depends_on:
+      postgres-db: # Ensures postgres-db is started and healthy before spring-app
+        condition: service_healthy # Waits for the healthcheck of postgres-db to pass
+    restart: on-failure
+
+  # pgAdmin Service for PostgreSQL GUI
+  pgadmin:
+    image: dpage/pgadmin4:latest # You can pin a specific version if preferred
+    container_name: my_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com # Email to login to pgAdmin
+      PGADMIN_DEFAULT_PASSWORD: adminpassword # Password to login to pgAdmin
+    ports:
+      - "5050:80" # Maps host port 5050 to pgAdmin container port 80
+    volumes:
+      - pgadmin_data_volume:/var/lib/pgadmin # Persists pgAdmin data (servers, settings)
+    depends_on:
+      - postgres-db # Ensures postgres-db is started before pgAdmin
+    restart: unless-stopped
+
+volumes:
+  postgres_data_volume: # Defines the named volume for PostgreSQL data persistence
+    driver: local
+  pgadmin_data_volume: # Defines the named volume for pgAdmin data persistence
+    driver: local
