@@ -9,8 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.prompt.PromptTemplate;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.example.springaimcp.model.Product;
 import com.example.springaimcp.repository.ProductRepository;
@@ -18,10 +18,27 @@ import com.example.springaimcp.repository.ProductRepository;
 @Service // Marks this class as a Spring service component
 public class AiMcpService {
 
-    private static final Logger logger =
-            LoggerFactory.getLogger(AiMcpService.class);
+    private static final Logger logger = LoggerFactory.getLogger(AiMcpService.class);
+    private static final String PRODUCT_PROMPT_TEMPLATE = """
+            You are an AI assistant for an e-commerce store.
+            You have access to the following product information from our database:
+            --- START OF PRODUCT DATA ---
+            {products}
+            --- END OF PRODUCT DATA ---
+
+            A customer has asked the following question:
+            "{query}"
+
+            Please answer the customer's question based ONLY on the provided product information.
+            If the information to answer the question is not available in the product data,
+            clearly state that you don't have specific details on that from the provided data.
+            Do not invent information or use external knowledge beyond this product data.
+            Keep answers concise but friendly.
+            """;
+
     private final ChatClient chatClient; // Spring AI ChatClient for interacting with the AI model
     private final ProductRepository productRepository; // Repository for accessing product data
+    private final PromptTemplate productPromptTemplate;
 
     /**
      * Constructor for AiMcpService.
@@ -29,11 +46,10 @@ public class AiMcpService {
      * @param chatClientBuilder The ChatClient.Builder to build the ChatClient.
      * @param productRepository The repository for product data.
      */
-    @Autowired
-    public AiMcpService(ChatClient.Builder chatClientBuilder, ProductRepository
-            productRepository) {
+    public AiMcpService(ChatClient.Builder chatClientBuilder, ProductRepository productRepository) {
         this.chatClient = chatClientBuilder.build();
         this.productRepository = productRepository;
+        this.productPromptTemplate = new PromptTemplate(PRODUCT_PROMPT_TEMPLATE);
     }
 
     /**
@@ -42,50 +58,27 @@ public class AiMcpService {
      * @param userQuery The query from the user.
      * @return The AI-generated response.
      */
+    @Transactional(readOnly = true)
     public String getAiResponse(String userQuery) {
-        // Fetch all products from the database to provide as context.
-        // For very large datasets, a more sophisticated retrieval mechanism (e.g., RAG
-        // with vector stores) is recommended.
         List<Product> products = productRepository.findAll();
         if (products.isEmpty()) {
             logger.warn("No products found in the database to provide as context.");
-            // Fallback or inform AI that product data is unavailable
         }
+
         String productContext = products.stream()
-                .map(Product::toString) // Convert each product to its string representation
-                .collect(Collectors.joining("\n")); // Join them with newlines
+                .map(Product::toString)
+                .collect(Collectors.joining(System.lineSeparator()));
 
-        // Define a prompt template.
-        String promptString = """
-                You are an AI assistant for an e-commerce store.
-                You have access to the following product information from our database:
-                --- START OF PRODUCT DATA ---
-                {products}
-                --- END OF PRODUCT DATA ---
+        if (productContext.isEmpty()) {
+            productContext = "No product data available.";
+        }
 
-                A customer has asked the following question:
-                "{query}"
-
-                Please answer the customer's question based ONLY on the provided product
-                information.
-                If the information to answer the question is not available in the product
-                data,
-                clearly state that you don't have specific details on that from the provided
-                data.
-                Do not invent information or use external knowledge beyond this product data.
-                Be friendly and helpful.
-                """;
-        PromptTemplate promptTemplate = new PromptTemplate(promptString);
-
-        // Create the prompt with the actual user query and product context.
-        Prompt prompt = promptTemplate.create(Map.of(
-                "products", productContext.isEmpty() ? "No product data available." :
-                        productContext,
+        Prompt prompt = productPromptTemplate.create(Map.of(
+                "products", productContext,
                 "query", userQuery));
 
-        logger.info("Sending prompt to AI. Instructions length: {}",
-                prompt.getInstructions().size());
-        if (prompt.getInstructions().size() > 3000) { // Example check, adjust as needed for your LLM's token limits
+        logger.info("Sending prompt to AI. Instruction count: {}", prompt.getInstructions().size());
+        if (prompt.getInstructions().size() > 3000) {
             logger.warn("Prompt is very long ({} characters), which might impact performance or hit token limits.",
                     prompt.getInstructions().size());
         }
