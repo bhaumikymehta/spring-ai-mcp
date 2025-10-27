@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.example.springaimcp.service.AiMcpService;
 
+import jakarta.validation.Valid;
+
 @RestController // Marks this class as a REST controller
 @RequestMapping("/api/mcp") // Base path for all endpoints in this controller
 public class AiMcpController {
@@ -35,14 +37,9 @@ public class AiMcpController {
      * }
      */
     @PostMapping("/query")
-    public ResponseEntity<Map<String, String>> handleQuery(@RequestBody Map<String, String> payload) {
-        String userQuery = payload.get("query");
+    public ResponseEntity<Map<String, String>> handleQuery(@Valid @RequestBody ChatQueryRequest request) {
+        String userQuery = request.query();
         logger.info("Received query request: {}", userQuery);
-
-        if (userQuery == null || userQuery.trim().isEmpty()) {
-            logger.warn("Empty query received.");
-            return ResponseEntity.badRequest().body(Map.of("error", "Query cannot be empty."));
-        }
         String aiResponse = aiMcpService.getAiResponse(userQuery);
         return ResponseEntity.ok(Map.of("response", aiResponse));
     }
